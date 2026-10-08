@@ -1,0 +1,8 @@
+#SPDX-License-Identifier: MIT-0
+---
+# defaults file for roles/jenkins_java_install
+jenkins_java_rpm_map:
+  "17": "https://download.oracle.com/java/17/archive/jdk-17.0.12_linux-x64_bin.rpm"
+  "21": "https://download.oracle.com/java/21/latest/jdk-21_linux-x64_bin.rpm"
+  "25": "https://download.oracle.com/java/25/latest/jdk-25_linux-x64_bin.rpm"
+  "26": "https://download.oracle.com/java/26/latest/jdk-26_linux-x64_bin.rpm"

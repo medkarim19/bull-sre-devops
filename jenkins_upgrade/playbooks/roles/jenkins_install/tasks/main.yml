@@ -1,0 +1,53 @@
+#SPDX-License-Identifier: MIT-0
+---
+# tasks file for roles/jenkins_install
+
+- name: Create jenkins directory
+  ansible.builtin.file:
+    path: /var/lib/jenkins
+    state: directory
+    mode: '0755'
+
+
+- name: Extract jenkins backup
+  ansible.builtin.command:
+    cmd: tar -xvf /tmp/jenkins-{{ jenkins_version }}.tar -C /var/lib/jenkins
+
+
+- name: Download war file for the jenkins
+  environment:
+    no_proxy: "{{ HOST }}"
+  ansible.builtin.get_url:
+    url: "https://updates.jenkins.io/download/war/{{ jenkins_version }}/jenkins.war"
+    dest: /var/lib/jenkins/jenkins.war 
+    
+
+- name: Create Jenkins service file
+  ansible.builtin.template:
+    src: jenkins_service.j2
+    dest: /etc/systemd/system/jenkins.service
+    owner: root
+    group: root
+    mode: '0644'
+
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+
+- name: Restart Jenkins
+  ansible.builtin.systemd:
+    name: jenkins
+    state: restarted
+
+
+- name: Wait for startup
+  ansible.builtin.pause:
+    minutes: 1
+
+
+- name: Check jenkins status
+  ansible.builtin.include_role:
+    name: jenkins_check_status
+

@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: MIT-0
+---
+# tasks file for roles/jenkins_java_check
+
+- name: Convert jenkins_version to string
+  ansible.builtin.set_fact:
+    jenkins_version: "{{ jenkins_version | string }}"
+
+
+- name: Get installed java version
+  ansible.builtin.command: java -XshowSettings:properties -version
+  register: java_out
+  ignore_errors: true
+
+
+- name: Set java availability status
+  ansible.builtin.set_fact:
+    java_installed: "{{ java_out.rc == 0 }}"
+
+
+- name: Extract installed java version
+  ansible.builtin.set_fact:
+    java_major: "{{ ((java_out.stdout_lines + java_out.stderr_lines) | select('search', 'java.specification.version') | first).split('=')[-1] | trim | int }}"
+  when: java_installed
+
+
+- name: Set java required version and compatibility
+  ansible.builtin.set_fact:
+    java_version_required: "{{ java_version_required }}"
+    java_compatibility: "{{ java_installed and (java_major | int == java_version_required | int) }}"
+
+
+- name: Update java_version in var file
+  ansible.builtin.lineinfile:
+    path: "{{ var_file_path }}"
+    regexp: '^java_version\s*:'
+    line: "java_version: {{ java_version_required }}"
+    create: true
+  delegate_to: "{{ HOST }}"
+
+
+- name: Update java_compatibility in var file
+  ansible.builtin.lineinfile:
+    path: "{{ var_file_path }}"
+    regexp: '^java_compatibility\s*:'
+    line: "java_compatibility: {{ java_compatibility }}"
+    create: true
+  delegate_to: "{{ HOST }}"
+
+  

@@ -1,0 +1,177 @@
+from selenium.webdriver import Firefox
+from selenium.webdriver.firefox.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
+import json
+import argparse
+import time
+import urllib.request
+import urllib.error
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Script d'extraction des alertes Jenkins.")
+    parser.add_argument("--host", required=True, help="Adresse IP ou hôte de Jenkins")
+    parser.add_argument("--username", required=True, help="Nom d'utilisateur Jenkins")
+    parser.add_argument("--password", required=True, help="Mot de passe Jenkins")
+    return parser.parse_args()
+
+
+def create_driver():
+    options = Options()
+    options.add_argument("--headless")
+
+    # Force Jenkins UI in French (if available)
+    options.set_preference("intl.accept_languages", "fr")
+
+    return Firefox(options=options)
+
+
+def wait_for_jenkins(host: str, timeout: int = 120, interval: int = 5):
+    url = f"http://{host}:8080/login"
+    deadline = time.time() + timeout
+
+    print(f"[INFO] Waiting for Jenkins to be ready at {url} ...")
+
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                body = resp.read().decode("utf-8", errors="ignore")
+
+                if "j_username" in body:
+                    print("[INFO] Jenkins is ready.")
+                    return
+
+                elif "Restarting" in body or "restarting" in body:
+                    print("[INFO] Jenkins is still restarting...")
+
+        except (urllib.error.URLError, OSError):
+            pass
+
+        time.sleep(interval)
+
+    print("[ERROR] Jenkins did not become ready.")
+    raise SystemExit(1)
+
+
+def login(driver, wait, host, username, password):
+    login_url = f"http://{host}:8080/login?from=%2F"
+
+    driver.get(login_url)
+
+    username_field = wait.until(
+        EC.presence_of_element_located((By.NAME, "j_username"))
+    )
+    username_field.clear()
+    username_field.send_keys(username)
+
+    password_field = wait.until(
+        EC.presence_of_element_located((By.NAME, "j_password"))
+    )
+    password_field.clear()
+    password_field.send_keys(password)
+
+    wait.until(
+        EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))
+    ).click()
+
+    wait.until(EC.url_changes(login_url))
+
+    print(f"[DEBUG] Logged in: {driver.current_url}")
+
+
+def fetch_alerts(driver, wait, host):
+    driver.get(f"http://{host}:8080/manage")
+
+    wait.until(
+        EC.presence_of_element_located((By.TAG_NAME, "body"))
+    )
+
+    time.sleep(20)
+
+    alerts = driver.find_elements(By.CSS_SELECTOR, ".jenkins-alert-danger")
+
+    results = [
+        alert.text.strip()
+        for alert in alerts
+        if alert.text.strip()
+    ]
+
+    if results:
+        print(json.dumps(results, indent=2, ensure_ascii=False))
+    else:
+        print("[INFO] No alerts found.")
+
+    return results
+
+
+def check_no_updates_available(driver, wait, host):
+
+    driver.get(f"http://{host}:8080/manage/pluginManager/")
+
+    wait.until(
+        EC.presence_of_element_located((By.TAG_NAME, "body"))
+    )
+
+    # Give Jenkins time to populate the notice
+    time.sleep(3)
+
+    notices = driver.find_elements(By.CSS_SELECTOR, ".jenkins-notice")
+
+    print(f"[DEBUG] Found {len(notices)} notice(s).")
+
+    no_updates = False
+
+    keywords = [
+        "aucune mise à jour disponible",
+        "no updates available"
+    ]
+
+    for i, notice in enumerate(notices):
+        message = notice.text.strip().lower()
+
+        print(f"[DEBUG] Notice {i}: {repr(message)}")
+
+        if any(keyword in message for keyword in keywords):
+            no_updates = True
+            break
+
+    if no_updates:
+        print("[INFO] Aucune mise à jour disponible.")
+    else:
+        print("[INFO] Des mises à jour de plugins sont disponibles.")
+
+    return no_updates
+
+
+def main():
+    args = parse_args()
+
+    driver = create_driver()
+    wait = WebDriverWait(driver, 15)
+
+    try:
+        wait_for_jenkins(args.host)
+
+        login(
+            driver,
+            wait,
+            args.host,
+            args.username,
+            args.password
+        )
+
+        time.sleep(20)
+        
+        fetch_alerts(driver, wait, args.host)
+
+        check_no_updates_available(driver, wait, args.host)
+
+    finally:
+        driver.quit()
+
+
+if __name__ == "__main__":
+    main()

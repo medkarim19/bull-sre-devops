@@ -1,0 +1,108 @@
+# SPDX-License-Identifier: MIT-0
+---
+# tasks file for roles/jenkins_java_install
+
+- name: Get java alternatives list
+  ansible.builtin.command: alternatives --list
+  register: java_alt_list
+  changed_when: false
+
+
+- name: Extract Java alternative lines
+  ansible.builtin.set_fact:
+    java_alternatives: "{{ java_alt_list.stdout_lines | select('search', '^java_jdk_') | list }}"
+
+
+- name: Check if required Java version in alternatives
+  ansible.builtin.set_fact:
+    java_version_in_alternatives: "{{ java_alternatives | select('search', '_' ~ java_version_required ~ '_') | list | length > 0 }}"
+
+
+- name: Get RPM download URL for required Java version
+  ansible.builtin.set_fact:
+    java_rpm_url: "{{ jenkins_java_rpm_map[java_version_required | string] }}"
+  when: not java_version_in_alternatives
+
+
+- name: Fail if no URL for required Java version
+  ansible.builtin.fail:
+    msg: "No RPM URL found for Java {{ java_version_required }}. Add it to jenkins_java_rpm_map."
+  when:
+    - not java_version_in_alternatives
+    - java_rpm_url == ''
+
+
+- name: Download and install Java RPM
+  when: not java_version_in_alternatives
+  environment: 
+    no_proxy: "{{ HOST }}"
+  block:
+    - name: Download Java RPM to the tmp directory
+      ansible.builtin.get_url:
+        url: "{{ java_rpm_url }}"
+        dest: "/tmp/{{ java_rpm_url | urlsplit('path') | basename }}"
+
+    - name: Install Java RPM via dnf
+      ansible.builtin.command:
+        cmd: dnf -y install /tmp/{{ java_rpm_url | urlsplit('path') | basename }}
+
+    - name: Cleanup downloaded RPM from the tmp directory
+      ansible.builtin.file:
+        path: "/tmp/{{ java_rpm_url | urlsplit('path') | basename }}"
+        state: absent
+
+
+- name: Get alternatives list after installation
+  ansible.builtin.command: alternatives --list
+  register: java_alt_list
+  changed_when: false
+  when: not java_version_in_alternatives
+
+
+- name: Refresh alternatives after installation
+  ansible.builtin.set_fact:
+    java_alternatives: "{{ java_alt_list.stdout_lines | select('search', '^java_jdk_') | list }}"
+  when: not java_version_in_alternatives
+
+
+- name: Verify required version in alternatives
+  ansible.builtin.fail:
+    msg: "Java {{ java_version_required }} installed but not found in alternatives. Manual check required."
+  when:
+    - not java_version_in_alternatives
+    - java_alternatives | select('search', '_' ~ java_version_required ~ '_') | list | length == 0
+
+
+- name: Set java and javac binaries
+  vars:
+    java_alt_match: "{{ java_alternatives | select('search', '_' ~ java_version_required ~ '_') | list | first | default('') }}"
+    java_jvm_path: "{{ java_alt_match.split('\t')[2] | trim }}"
+  when: java_alt_match != ''
+  block:
+    - name: Set java binary
+      ansible.builtin.command: alternatives --set java {{ java_jvm_path }}/bin/java
+      become: true
+      changed_when: true
+
+    - name: Set javac binary
+      ansible.builtin.command: alternatives --set javac {{ java_jvm_path }}/bin/javac
+      become: true
+      changed_when: true
+
+
+- name: Extract the new installed Java version
+  ansible.builtin.command: java -version
+  register: java_version_check
+  changed_when: false
+
+
+- name: Display the new installed Java version
+  ansible.builtin.debug:
+    var: java_version_check.stderr
+
+
+- name: Jenkins java check
+  ansible.builtin.include_role:
+    name: jenkins_java_check
+
+    

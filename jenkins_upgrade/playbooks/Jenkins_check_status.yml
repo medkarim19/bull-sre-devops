@@ -1,0 +1,16 @@
+---
+- name: Check Jenkins Health
+  hosts: "{{ HOST }}"
+  become: true
+  
+
+  tasks:
+
+
+
+#-----------------------------JENKINS:STATUS-----------------------------#
+    - name: Check jenkins status
+      ansible.builtin.include_role:
+        name: jenkins_check_status
+
+        

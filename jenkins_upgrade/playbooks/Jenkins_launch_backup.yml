@@ -1,0 +1,85 @@
+---
+- name: Backup Full Jenkins
+  hosts: "{{ HOST }}"
+  become: true
+  
+  
+  tasks:
+
+
+
+#-----------------------------JENKINS:SHUTDOWN-----------------------------#    
+    - name: Load credentials
+      ansible.builtin.include_vars:
+        file: "../group_vars/all/cred.yml"
+
+    - name: Create the script to stop all the builds of the jobs
+      ansible.builtin.template:
+        src: ../playbooks/roles/jenkins_check_status/templates/stop_builds.sh.j2
+        dest: /var/lib/jenkins/stop_builds.sh
+        mode: '0700'
+
+    - name: Stop all builds of the jobs
+      ansible.builtin.command:
+        cmd: /var/lib/jenkins/stop_builds.sh
+
+    - name: Shutdown Jenkins
+      ansible.builtin.systemd:
+        name: jenkins
+        state: stopped
+
+    - name: Check systemd status of Jenkins
+      ansible.builtin.systemd:
+        name: jenkins
+      register: jenkins_status
+    
+    - name: Verify Jenkins service 
+      ansible.builtin.assert:
+        that:
+          - jenkins_status.status.ActiveState == "inactive"
+          - jenkins_status.status.SubState == "dead"
+        fail_msg: "Jenkins service is not stopped"
+        success_msg: "Jenkins service is stopped"
+      
+      
+#-----------------------------JENKINS:ARCHIVE-----------------------------#
+    - name: Set the Jenkins archive path
+      ansible.builtin.set_fact:
+        archive_backup_path: "/tmp/jenkins-{{ jenkins_curr_version }}.tar"
+
+    - name: Tar the Jenkins home directory
+      ansible.builtin.command:
+        cmd: tar -czf "{{ archive_backup_path }}" -C /var/lib/jenkins .
+
+    - name: Display the content of the tmp directory
+      ansible.builtin.command: ls /tmp/
+      register: res
+    
+    - name: Verify the creation of the jenkins archive
+      ansible.builtin.assert:
+        that:
+          - "'jenkins-' ~ jenkins_curr_version ~ '.tar' in res.stdout"
+        fail_msg: "Jenkins archive is not found"
+        success_msg: "Jenkins archive found successfully"
+    
+    - name: Get file type    
+      ansible.builtin.command:
+        cmd: file {{ archive_backup_path }}
+      register: output
+      
+    - name: Ensure file type is tar
+      ansible.builtin.assert:
+        that:
+          - "'jenkins-' ~ jenkins_curr_version ~ '.tar: gzip compressed data' in output.stdout"
+        fail_msg: "File type is not tar"
+        success_msg: "File type is tar"
+
+    - name: Push the jenkins archive to the nexus repo
+      ansible.builtin.command:
+        cmd: curl -u {{ nexus_user }}:{{ nexus_pass }} --insecure --upload-file {{ archive_backup_path }}  {{ nexus_repo }}/Backups/FULL/
+
+    - name: Clean backup directory
+      ansible.builtin.command:
+        cmd: rm {{ archive_backup_path }}
+
+        

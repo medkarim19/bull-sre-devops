@@ -1,0 +1,6 @@
+#!/bin/bash
+UPDATE_LIST=$(java -jar /var/lib/jenkins/jenkins-cli.jar -auth '{{ jenkins_user }}:{{ jenkins_api_token }}' -s http://{{ HOST }}:8080/ list-plugins | grep -e ')$' | awk '{% raw %}{ print $1 }{% endraw %}')
+if [ ! -z "${UPDATE_LIST}" ]; then 
+    java -jar /var/lib/jenkins/jenkins-cli.jar -auth '{{ jenkins_user }}:{{ jenkins_api_token }}' -s http://{{ HOST }}:8080/ install-plugin ${UPDATE_LIST}
+    java -jar /var/lib/jenkins/jenkins-cli.jar -auth '{{ jenkins_user }}:{{ jenkins_api_token }}' -s http://{{ HOST }}:8080/ safe-restart
+fi

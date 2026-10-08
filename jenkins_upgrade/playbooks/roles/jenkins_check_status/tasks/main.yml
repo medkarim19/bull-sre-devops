@@ -1,0 +1,201 @@
+#SPDX-License-Identifier: MIT-0
+---
+# tasks file for roles/jenkins_check_status
+
+
+    - name: Check systemd status of Jenkins
+      ansible.builtin.systemd:
+        name: jenkins
+      register: jenkins_status
+
+
+    - name: Verify Jenkins service 
+      ansible.builtin.assert:
+        that:
+          - jenkins_status.status.ActiveState == "active"
+          - jenkins_status.status.SubState == "running"
+        fail_msg: "Jenkins service is not running"
+        success_msg: "Jenkins service is active and running"
+
+
+    - name: Load credentials
+      ansible.builtin.include_vars:
+        file: "../group_vars/all/cred.yml"
+
+
+    - name: Check Jenkins main API
+      ansible.builtin.uri:
+        url: "http://{{ HOST }}:8080/api/json"
+        user: "{{ jenkins_user }}"
+        password: "{{ jenkins_api_token }}"
+        force_basic_auth: true
+        timeout: 10
+      environment:
+        no_proxy: "{{ HOST }}"
+      register: jenkins_api
+      failed_when: jenkins_api.failed
+
+
+    - name: Extract Jenkins Version
+      ansible.builtin.set_fact:
+        jenkins_curr_version: "{{ jenkins_api.x_jenkins }}"
+
+
+    - name: Display Jenkins Version
+      ansible.builtin.debug:
+        var: jenkins_curr_version
+
+
+    - name: Update Jenkins version
+      ansible.builtin.lineinfile:
+        path: "../group_vars/prod/prod.yml"
+        regexp: '^jenkins_curr_version\s*:'
+        line: "jenkins_curr_version: {{ jenkins_curr_version }}"
+        create: yes
+      delegate_to: "{{ HOST }}"
+
+
+    - name: Check Jenkins queue API
+      ansible.builtin.uri:
+        url: "http://{{ HOST }}:8080/queue/api/json"
+        user: "{{ jenkins_user }}"
+        password: "{{ jenkins_api_token }}"
+        force_basic_auth: true
+        timeout: 10
+      environment:
+        no_proxy: "{{ HOST }}"
+      register: jenkins_queue
+
+
+    - name: Extract number of jobs from the queue
+      ansible.builtin.set_fact:
+        jenkins_queue_count: "{{ jenkins_queue.json['items'] | length }}"
+
+
+    - name: Verify queue charge
+      ansible.builtin.assert:
+        that:
+          - jenkins_queue_count | int < 100
+        fail_msg: "Jenkins queue has {{ jenkins_queue_count }} jobs"
+        success_msg: "Jenkins queue depth OK ({{ jenkins_queue_count }} jobs)"
+
+
+    - name: Check Jenkins plugins 
+      ansible.builtin.uri:
+        url: "http://{{ HOST }}:8080/pluginManager/api/json?depth=1"
+        user: "{{ jenkins_user }}"
+        password: "{{ jenkins_api_token }}"
+        force_basic_auth: true
+        status_code: 200
+        timeout: 10
+      environment:
+        no_proxy: "{{ HOST }}"
+      register: jenkins_plugins
+
+
+    - name: Display all installed Jenkins plugins
+      ansible.builtin.debug:
+        var: jenkins_plugins.json['plugins']
+
+
+    - name: Check Jenkins jobs
+      ansible.builtin.debug:
+        var: jenkins_api.json['jobs']
+
+
+    - name: Check Jenkins nodes API
+      ansible.builtin.uri:
+        url: "http://{{ HOST }}:8080/computer/api/json"
+        user: "{{ jenkins_user }}"
+        password: "{{ jenkins_api_token }}"
+        force_basic_auth: true
+        status_code: 200
+        timeout: 10
+      environment:
+        no_proxy: "{{ HOST }}"
+      register: jenkins_nodes
+
+
+    - name: Store offline node list
+      ansible.builtin.set_fact:
+        jenkins_offline_nodes: "{{ jenkins_nodes.json['computer'] | selectattr('offline', 'equalto', true) | list }}"
+
+
+    - name: Verify all nodes are online
+      ansible.builtin.assert:
+        that:
+          - jenkins_offline_nodes | length == 0
+        fail_msg: "Offline nodes: {{ jenkins_offline_nodes | map(attribute='displayName') | list }}"
+        success_msg: "All Jenkins nodes are online"
+      ignore_errors: true
+
+
+    - name: Check Jenkins disk usage
+      ansible.builtin.shell: df /var/lib/jenkins | awk 'NR==2 {print $5}'
+      register: disk_used
+
+
+    - name: Display disk usage
+      ansible.builtin.debug:
+        var: disk_used.stdout
+
+
+    - name: Verify disk usage is below threshold
+      ansible.builtin.assert:
+        that:
+          - disk_used.stdout | int < 60
+        fail_msg: "Jenkins disk usage is {{ disk_used.stdout }}"
+        success_msg: "Jenkins disk usage is OK {{ disk_used.stdout }}"
+
+
+    - name: Download jenkins cli jar
+      environment: 
+        no_proxy: "{{ HOST }}"
+      ansible.builtin.get_url:
+        url: "http://{{ HOST }}:8080/jnlpJars/jenkins-cli.jar"
+        dest: "/var/lib/jenkins/jenkins-cli.jar" 
+        url_username: "{{ jenkins_user }}"
+        url_password: "{{ jenkins_api_token }}"
+        force_basic_auth: true
+
+
+    - name: Extract Jenkins plugins to update
+      ansible.builtin.shell:
+        cmd: java -jar /var/lib/jenkins/jenkins-cli.jar -s http://{{ HOST }}:8080 -auth '{{ jenkins_user }}:{{ jenkins_api_token }}' list-plugins | grep -e ')$' | awk '{ print $1 }'
+      register: plugins_to_update
+
+
+    - name: Display Jenkins plugins to update
+      ansible.builtin.debug:
+        var: plugins_to_update.stdout_lines
+
+    
+    - name: Create the script to extract the plugins to update
+      ansible.builtin.template:
+        src: update_plugins.sh.j2
+        dest: /var/lib/jenkins/update_plugins.sh
+        mode: '0700'
+
+
+    - name: Update the plugins
+      ansible.builtin.command:
+        cmd: /var/lib/jenkins/update_plugins.sh
+
+    
+    - name: Create the script to extract the Jenkins Alerts
+      ansible.builtin.template:
+        src: jenkins_alerts.py.j2
+        dest: /var/lib/jenkins/jenkins_alerts.py
+        mode: '0700'
+
+    
+    - name: Execute the script of the Jenkins Alerts
+      ansible.builtin.command:
+        cmd: python /var/lib/jenkins/jenkins_alerts.py --host "{{ HOST }}" --username '{{ jenkins_user }}' --password '{{ jenkins_password }}' 
+      register: jenkins_alerts
+
+
+    - name: Display the Jenkins Alerts
+      ansible.builtin.debug:
+        var: jenkins_alerts
+

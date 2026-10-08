@@ -1,0 +1,55 @@
+---
+- name: Validate Jenkins backup
+  hosts: "{{ HOST }}"
+  become: true
+
+  
+  tasks:
+
+
+
+#-----------------------------SET:VAR-----------------------------#
+    - name: Include prod var file path
+      ansible.builtin.include_vars:
+        file: "../group_vars/prod/prod.yml"
+
+    - name: Set var file path
+      ansible.builtin.set_fact:
+        var_file_path: "../group_vars/test/test.yml"
+    
+    - name: Set required java version var
+      ansible.builtin.set_fact:
+        java_version_required: "{{ java_version_required }}"
+
+    - name: Delete jenkins home if exists
+      ansible.builtin.file:
+        path: /var/lib/jenkins
+        state: absent
+
+
+# ----------------------------- JAVA:CHECK ----------------------------- #
+    - name: Check jenkins java compatibility
+      ansible.builtin.include_role:
+        name: jenkins_java_check
+
+    - name: Install java if incompatible      
+      ansible.builtin.include_role:
+        name: jenkins_java_install
+      when: not java_compatibility
+
+
+#----------------------------- DOWNLOAD:BACKUP ----------------------------- #
+    - name: Load credentials
+      ansible.builtin.include_vars:
+        file: "../group_vars/all/cred.yml"
+
+    - name: Download the recent backup from nexus repo
+      ansible.builtin.command:
+        cmd: curl -u {{ nexus_user }}:{{ nexus_pass }} --insecure -o /tmp/jenkins-{{ jenkins_version }}.tar "{{ nexus_repo }}/Backups/FULL/jenkins-{{ jenkins_version }}.tar"
+
+
+#----------------------------- RUN:JENKINS ----------------------------- #
+    - name: Install jenkins     
+      ansible.builtin.include_role:
+        name: jenkins_install
+      

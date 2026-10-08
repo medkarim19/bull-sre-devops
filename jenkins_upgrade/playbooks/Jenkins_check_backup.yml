@@ -1,0 +1,40 @@
+---
+  - name: Check Jenkins backup creation
+    hosts: "{{ HOST }}"
+    become: true
+
+
+    tasks:
+
+
+
+#-----------------------------BACKUP:RECENT-----------------------------# 
+    - name: Load credentials
+      ansible.builtin.include_vars:
+        file: "../group_vars/all/cred.yml"
+
+    - name: Get the latest backup from nexus repo
+      ansible.builtin.shell:
+        cmd: curl -u {{ nexus_user }}:{{ nexus_pass }} --insecure "https://nexus.bds.sd.hd2c.dom/service/rest/v1/search/assets?repository=BDS.sd.backup.jenkins&q=Backups/FULL/jenkins" | jq -r '.items[].path'| grep '^Backups/FULL/' | sort | tail -1
+      register: output
+
+
+#-----------------------------BACKUP:NAME-----------------------------# 
+    - name: Extract the version of the latest backup
+      ansible.builtin.set_fact:
+        jenkins_latest_backup_version: "{{ output.stdout | regex_search('jenkins-([0-9.]+)\\.tar', '\\1') }}"
+
+
+#-----------------------------BACKUP:VERSION-----------------------------# 
+    - name: Display the version of the latest backup
+      ansible.builtin.debug:
+        var: jenkins_latest_backup_version
+
+    - name: Update Jenkins backup version
+      ansible.builtin.lineinfile:
+        path: "../group_vars/prod/prod.yml"
+        regexp: '^jenkins_latest_backup_version\s*:'
+        line: "jenkins_latest_backup_version: {{ jenkins_latest_backup_version | first }}"
+        create: yes
+      delegate_to: localhost
+

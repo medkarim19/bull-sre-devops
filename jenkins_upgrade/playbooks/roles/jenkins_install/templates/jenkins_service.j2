@@ -1,0 +1,14 @@
+[Unit]
+Description=Jenkins Continuous Integration Server
+Requires=network.target
+After=network.target
+
+[Service]
+Type=notify
+Environment="JENKINS_HOME=/var/lib/jenkins"
+ExecStart=/usr/bin/java -jar /var/lib/jenkins/jenkins.war --httpPort=8080
+Restart=on-failure
+SuccessExitStatus=143
+
+[Install]
+WantedBy=multi-user.target

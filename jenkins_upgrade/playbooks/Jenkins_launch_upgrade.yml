@@ -1,0 +1,57 @@
+---
+- name: Launch Jenkins Upgrade
+  hosts: "{{ HOST }}"
+  become: true
+
+
+  tasks:
+
+
+
+#-----------------------------SET:VAR-----------------------------#
+    - name: Set var file path
+      ansible.builtin.set_fact:
+        var_file_path: "../group_vars/prod/prod.yml"
+    
+    - name: Set jenkins version var
+      ansible.builtin.set_fact:
+        jenkins_version: "{{ jenkins_new_version }}"
+
+    - name: Set required java version var
+      ansible.builtin.set_fact:
+        java_version_required: "{{ java_version_required }}"
+
+
+#-----------------------------JENKINS:JAVA-----------------------------#
+    - name: Check java version for the new jenkins version 
+      ansible.builtin.include_role:
+        name: jenkins_java_check
+    
+    - name: Install java if incompatible      
+      ansible.builtin.include_role:
+        name: jenkins_java_install 
+      when: not java_compatibility
+
+
+#-----------------------------JENKINS:UPDATE-----------------------------#
+    - name: Download war file for the jenkins
+      environment:
+        no_proxy: "{{ HOST }}"
+      ansible.builtin.get_url:
+        url: "https://updates.jenkins.io/download/war/{{ jenkins_version }}/jenkins.war"
+        dest: /var/lib/jenkins/jenkins.war 
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart Jenkins
+      ansible.builtin.systemd:
+        name: jenkins
+        state: restarted
+
+    - name: Wait for start up
+      ansible.builtin.pause:
+        minutes: 1
+
+        
